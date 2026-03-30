@@ -1,0 +1,19 @@
+# Primary console → UART0 (CH340), not USB
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_UART_NUM=0
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+
+# Disable secondary USB-SERIAL-JTAG console — it initializes the USB peripheral
+# on GPIO19/20 and conflicts with TinyUSB taking over the OTG port.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=n
+
+# Correct flash size for N16R8
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# 1 ms tick resolution for USB timing
+CONFIG_FREERTOS_HZ=1000
+
+# 240 MHz — more headroom for synth processing
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
