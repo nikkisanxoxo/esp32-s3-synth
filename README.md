@@ -76,14 +76,19 @@ Clone with submodules:
 git clone --recurse-submodules https://github.com/jmaltar/esp32-s3-synth.git
 ```
 
-Set target and build:
+On a fresh clone, set the target first (only needed once):
 
 ```bash
 idf.py set-target esp32s3
+```
+
+Then build:
+
+```bash
 idf.py build
 ```
 
-VS Code tasks: **Build**, **Clean**.
+VS Code tasks: **Set Target** (once), **Build**, **Clean**.
 
 ## Flash
 

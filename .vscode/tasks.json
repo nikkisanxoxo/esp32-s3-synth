@@ -2,6 +2,14 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "Set Target",
+            "type": "shell",
+            "command": ". ~/.espressif/esp-idf/export.sh && idf.py set-target esp32s3",
+            "group": "build",
+            "presentation": { "panel": "shared", "reveal": "always" },
+            "problemMatcher": []
+        },
+        {
             "label": "Build",
             "type": "shell",
             "command": ". ~/.espressif/esp-idf/export.sh && idf.py build",
