@@ -3,6 +3,7 @@ set(SYNTH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../synth)
 idf_component_register(
     SRCS
         "main.cpp"
+        "clock.cpp"
         "${SYNTH_DIR}/adsr.cpp"
         "${SYNTH_DIR}/oscillator.cpp"
         "${SYNTH_DIR}/voice.cpp"
