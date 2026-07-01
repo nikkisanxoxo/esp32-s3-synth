@@ -4,7 +4,6 @@ idf_component_register(
     SRCS
         "main.cpp"
         "clock.cpp"
-        "${SYNTH_DIR}/adsr.cpp"
         "${SYNTH_DIR}/oscillator.cpp"
         "${SYNTH_DIR}/voice.cpp"
         "${SYNTH_DIR}/synth.cpp"
@@ -16,9 +15,10 @@ idf_component_register(
         driver
         usb
         esp_timer
+        esp_driver_i2s
 )
 
-target_compile_definitions(${COMPONENT_LIB} PRIVATE SYNTH_N_VOICES=9)
+target_compile_definitions(${COMPONENT_LIB} PRIVATE SYNTH_N_VOICES=16)
 
 # Expose main/'s directory to TinyUSB so it can find tusb_config.h during its own compilation
 idf_component_get_property(tusb_lib espressif__tinyusb COMPONENT_LIB)

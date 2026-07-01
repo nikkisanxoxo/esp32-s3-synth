@@ -1,0 +1,267 @@
+#ifndef VOICE_H
+#define VOICE_H
+
+#include <array>
+#include <cstdint>
+#include <algorithm>
+
+#include "constants.h"
+#include "oscillator.h"
+#include "adsr_rt.h"
+#include "utils.h"
+
+// ============================================
+// HILFSFUNKTIONEN
+// ============================================
+
+inline sample_t note_to_hz(int note) {
+    return 440.0f * std::exp2f((note - 69) / 12.0f);
+}
+
+inline bool valid_note(int n) {
+    return n >= 0 && n < 128;
+}
+
+// ============================================
+// BASIS-VOICE
+// ============================================
+
+template <size_t BL>
+struct Voice {
+    static constexpr size_t block_length = BL;
+
+    std::array<sample_t, BL * 2> buffer{};
+
+    // Echtzeit-ADSR (Defaults sind in adsr_rt.h definiert)
+    ADSR_RealTime adsr;
+
+    sample_t freq{0.0f};
+    sample_t gain{0.0f};
+
+    sample_t detune{0.05f};
+    sample_t spread{0.5f};
+
+    int current_note{-1};
+    uint64_t started_at{0};
+
+    int POR_note{-1};
+    int POR_velocity{0};
+
+    // Vier Oszillatoren
+    Oscillator osc1{sample_rate, 0.0f, Wavetable::saw_decr};
+    Oscillator osc2{sample_rate, 0.0f, Wavetable::sine};
+    Oscillator osc3{sample_rate, 0.0f, Wavetable::saw_decr};
+    Oscillator osc4{sample_rate, 0.0f, Wavetable::sine};
+
+    // --- Virtuelle Methoden ---
+    virtual bool should_be_evaluated() const {
+        return (current_note != -1) && freq > 0.0f && gain > 0.0f;
+    }
+
+    virtual void set_frequency(sample_t f) = 0;
+    virtual void adsr_on() = 0;
+    virtual void adsr_off() = 0;
+    virtual void adsr_init() = 0;
+
+    void assign(int note, int velocity) {
+        bool por = adsr.is_in_release();
+
+        if (!por) {
+            current_note = note;
+            set_frequency(note_to_hz(note));
+            gain = (velocity / 127.0f) * headroom;
+            started_at = ticks_by_far();
+            adsr_on();
+        } else {
+            POR_note = note;
+            POR_velocity = velocity;
+            adsr.gate_on(adsr.level);
+        }
+    }
+
+    void por_off() {
+        POR_note = -1;maltar/synth
+        POR_velocity = 0;
+    }
+
+    void handle_por() {
+        if (POR_note != -1 && adsr.is_idle()) {
+            int note = POR_note;
+            int vel = POR_velocity;
+            POR_note = -1;
+            POR_velocity = 0;
+            assign(note, vel);
+        }
+    }
+
+    virtual sample_t process_single() = 0;
+    virtual void operator()() = 0;
+
+    virtual ~Voice() = default;
+};
+
+// ============================================
+// SIMPLE VOICE
+// ============================================
+
+template <size_t BL>
+struct SimpleVoice : public Voice<BL> {
+    void adsr_on() override {
+        this->adsr.gate_on(this->adsr.level);
+    }
+
+    void adsr_off() override {
+        this->adsr.gate_off();
+    }
+
+    void adsr_init() override {
+        // Keine externen Defaults nötig - adsr_rt.h hat eigene Werte
+        this->adsr.reset();
+        // Optional: du kannst hier trotzdem eigene Werte setzen
+        // this->adsr.set_params(0.005f, 0.15f, 0.7f, 0.3f);
+    }
+
+    void set_frequency(sample_t f) override {
+        this->freq = f;
+    }
+
+    sample_t process_single() override {
+        sample_t env = this->adsr.process();
+
+        sample_t f = this->freq;
+
+        sample_t f1 = f * (1.0f + this->detune * 1.05f);
+        sample_t f2 = f * (1.0f - this->detune * 0.55f);
+        sample_t f3 = f * (1.0f + this->detune * 0.95f);
+        sample_t f4 = f * (1.0f - this->detune * 0.45f);
+
+        sample_t o1 = this->osc1(f1, this->gain);
+        sample_t o2 = this->osc2(f2, this->gain);
+        sample_t o3 = this->osc3(f3, this->gain);
+        sample_t o4 = this->osc4(f4, this->gain);
+
+        sample_t mix = (o1 + o2 + o3 + o4) * 0.25f;
+
+        return env * mix;
+    }
+
+    void operator()() override {
+        sample_t f = this->freq;
+
+        sample_t f1 = f * (1.0f + this->detune * 1.04f);
+        sample_t f2 = f * (1.0f - this->detune * 0.54f);
+        sample_t f3 = f * (1.0f + this->detune * 0.96f);
+        sample_t f4 = f * (1.0f - this->detune * 0.46f);
+
+        std::array<sample_t, BL * 2> b1{};
+        std::array<sample_t, BL * 2> b2{};
+        std::array<sample_t, BL * 2> b3{};
+        std::array<sample_t, BL * 2> b4{};
+
+        this->osc1(b1.data(), BL, f1, this->gain);
+        this->osc2(b2.data(), BL, f2, this->gain);
+        this->osc3(b3.data(), BL, f3, this->gain);
+        this->osc4(b4.data(), BL, f4, this->gain);
+
+        for (uint32_t i = 0; i < BL * 2; ++i) {
+            this->buffer[i] = 0.25f * (b1[i] + b2[i] + b3[i] + b4[i]);
+        }
+
+        this->adsr.process_stereo_buffer(this->buffer.data(), BL);
+        this->handle_por();
+    }
+};
+
+// ============================================
+// FM VOICE
+// ============================================
+
+template <size_t BL>
+struct FMVoice : public Voice<BL> {
+    sample_t ratio{1.0f};
+    sample_t freq_modulator{0.1f};
+    sample_t gain_modulator{0.05f};
+    sample_t fm_index{0.1f};
+
+    // Modulator-ADSR (eigene Defaults)
+    ADSR_RealTime adsr_modulator;
+
+    std::array<sample_t, BL * 2> modulator_buffer{};
+    Oscillator modulator{sample_rate, 0.0f, Wavetable::sine};
+
+    FMVoice() {
+        // Modulator-ADSR hat andere Defaults als Carrier
+        adsr_modulator.set_params(0.2f, 0.5f, 0.7f, 0.3f);
+    }
+
+    void adsr_on() override {
+        this->adsr.gate_on(this->adsr.level);
+        adsr_modulator.gate_on(adsr_modulator.level);
+    }
+
+    void adsr_off() override {
+        this->adsr.gate_off();
+        adsr_modulator.gate_off();
+    }
+
+    void adsr_init() override {
+        this->adsr.reset();
+        // Carrier-ADSR bekommt eigene Werte (abweichend von den Defaults)
+        this->adsr.set_params(0.005f, 0.15f, 0.7f, 0.4f);
+        adsr_modulator.reset();
+        adsr_modulator.set_params(0.2f, 0.5f, 0.7f, 0.3f);
+    }
+
+    void set_frequency(sample_t f) override {
+        this->freq = f;
+        freq_modulator = ratio * f;
+    }
+
+    sample_t process_single() override {
+        sample_t env = this->adsr.process();
+        sample_t env_mod = adsr_modulator.process();
+
+        sample_t mod = modulator(freq_modulator, gain_modulator);
+
+        sample_t I = fm_index * env_mod;
+        sample_t df = I * freq_modulator;
+        sample_t inst_freq = this->freq + df * mod;
+
+        const sample_t nyq = sample_rate * 0.49f;
+        inst_freq = std::clamp(inst_freq, 0.0f, nyq);
+
+        sample_t o = this->osc1(inst_freq, this->gain);
+
+        return env * o;
+    }
+
+    void operator()() override {
+        const sample_t nyq = sample_rate * 0.49f;
+        const sample_t fm_index_times_freq_modulator = fm_index * freq_modulator;
+
+        modulator(modulator_buffer.data(), BL, freq_modulator, gain_modulator);
+        adsr_modulator.process_stereo_buffer(modulator_buffer.data(), BL);
+
+        for (uint32_t i = 0; i < BL; ++i) {
+            sample_t f = modulator_buffer[2 * i];
+            f *= fm_index_times_freq_modulator;
+            f += this->freq;
+            f = std::clamp(f, 0.0f, nyq);
+
+            modulator_buffer[2 * i] = f;
+            modulator_buffer[2 * i + 1] = f;
+        }
+
+        this->osc1(
+            this->buffer.data(),
+                   BL,
+                   modulator_buffer.data(),
+                   this->gain
+        );
+
+        this->adsr.process_stereo_buffer(this->buffer.data(), BL);
+        this->handle_por();
+    }
+};
+
+#endif // VOICE_H
